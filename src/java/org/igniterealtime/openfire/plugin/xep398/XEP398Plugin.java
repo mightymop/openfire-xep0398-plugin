@@ -56,7 +56,7 @@ public class XEP398Plugin implements Plugin
     public static final SystemProperty<Boolean> XMPP_SHRINKVCARDIMG_ENABLED = SystemProperty.Builder.ofType(Boolean.class)
             .setKey("xmpp.xep0398.shrinkvcardimg")
             .setPlugin( "xep398" )
-            .setDefaultValue(true)
+            .setDefaultValue(false)
             .setDynamic(true)
             .build();
 

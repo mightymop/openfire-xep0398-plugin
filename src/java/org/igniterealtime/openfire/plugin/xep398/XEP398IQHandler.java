@@ -10,7 +10,6 @@ import java.util.UUID;
 
 import org.dom4j.Element;
 import org.jivesoftware.openfire.XMPPServer;
-import org.jivesoftware.openfire.container.PluginMetadata;
 import org.jivesoftware.openfire.interceptor.PacketInterceptor;
 import org.jivesoftware.openfire.interceptor.PacketRejectedException;
 import org.jivesoftware.openfire.pep.PEPService;
@@ -18,15 +17,12 @@ import org.jivesoftware.openfire.pep.PEPServiceManager;
 import org.jivesoftware.openfire.pubsub.DefaultNodeConfiguration;
 import org.jivesoftware.openfire.pubsub.LeafNode;
 import org.jivesoftware.openfire.pubsub.Node;
-import org.jivesoftware.openfire.pubsub.NotAcceptableException;
-import org.jivesoftware.openfire.pubsub.PubSubEngine;
 import org.jivesoftware.openfire.pubsub.PublishedItem;
 import org.jivesoftware.openfire.session.Session;
 import org.jivesoftware.openfire.user.User;
 import org.jivesoftware.openfire.user.UserNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.xmpp.forms.DataForm;
 import org.xmpp.packet.IQ;
 import org.xmpp.packet.IQ.Type;
 import org.xmpp.packet.JID;
@@ -77,6 +73,78 @@ public class XEP398IQHandler implements PacketInterceptor
         }
     }
 
+    public Avatar getAvatarWithInfotag(JID user,Element info)
+    {
+        Log.debug("Read Avatar from PEPService ("+user.toBareJID()+")");
+        Avatar result = null;
+        PEPService pep = getPEPFromUser(user);
+        if (pep!=null)
+        {
+            //Search for relevant nodes
+            Node avatarNode = pep.getNode(NAMESPACE_DATA);
+
+            //Check for pep nodes
+            if (info!=null&&avatarNode!=null)
+            {
+                //META
+                if (info.attribute("url")!=null)
+                {
+                    return getAvatar(user);
+                }
+                result = new Avatar();
+                result.getMetadata().setHeight(Integer.parseInt(info.attributeValue("height")));
+                result.getMetadata().setWidth(Integer.parseInt(info.attributeValue("width")));
+                result.getMetadata().setType(info.attributeValue("type"));
+                result.getMetadata().setId(info.attributeValue("id"));
+                Log.debug("Metadata loaded ("+user.toBareJID()+")",result.getMetadata().toString());
+
+                List<PublishedItem> items = avatarNode.getPublishedItems();
+                if (items!=null)
+                {
+                    boolean founddata = false;
+                    for (PublishedItem itm : items)
+                    {
+                        if (itm.getID().equals(info.attributeValue("id")))
+                        {
+                            Element payload = itm.getPayload();
+                            if (payload!=null)
+                            {
+                                String img = payload.getText();
+                                if (img!=null)
+                                {
+                                    result.setImage(img);
+                                    Log.debug("Avatarimage loaded ("+user.toBareJID()+")",result.getMetadata().toString());
+                                    founddata=true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!founddata)
+                    {
+                        Log.debug("Node ("+NAMESPACE_DATA+") does not have a data tag ("+user.toBareJID()+")");
+                        return null;
+                    }
+                }
+                else {
+                    Log.debug("Node ("+NAMESPACE_DATA+") does not have any children ("+user.toBareJID()+")");
+                    return null;
+                }
+
+                return result;
+            }
+            else {
+                Log.debug("One of the following nodes were not found in PEP: "+NAMESPACE_DATA+" or "+NAMESPACE_METADATA+" ("+user.toBareJID()+")");
+                return null;
+            }
+        }
+        else {
+            Log.debug("Avatar not loaded");
+            return null;
+        }
+    }
+
     public Avatar getAvatar(JID user)
     {
         Log.debug("Read Avatar from PEPService ("+user.toBareJID()+")");
@@ -98,7 +166,7 @@ public class XEP398IQHandler implements PacketInterceptor
                 if (items!=null)
                 {
                     //search publisheditems for info nodes
-                    boolean founddata = false; 
+                    boolean founddata = false;
                     for (PublishedItem itm : items)
                     {
                         Element payload = itm.getPayload();
@@ -137,23 +205,26 @@ public class XEP398IQHandler implements PacketInterceptor
                 items = avatarNode.getPublishedItems();
                 if (items!=null)
                 {
-                    boolean founddata = false; 
+                    boolean founddata = false;
                     for (PublishedItem itm : items)
                     {
-                        Element payload = itm.getPayload();
-                        if (payload!=null)
+                        if (itm.getID().equals(result.getMetadata().getId()))
                         {
-                            String img = payload.getText();
-                            if (img!=null)
+                            Element payload = itm.getPayload();
+                            if (payload!=null)
                             {
-                                result.setImage(img);
-                                Log.debug("Avatarimage loaded ("+user.toBareJID()+")",result.getMetadata().toString());
-                                founddata=true;
-                                break;
+                                String img = payload.getText();
+                                if (img!=null)
+                                {
+                                    result.setImage(img);
+                                    Log.debug("Avatarimage loaded ("+user.toBareJID()+")",result.getMetadata().toString());
+                                    founddata=true;
+                                    break;
+                                }
                             }
                         }
                     }
-                    
+
                     if (!founddata)
                     {
                         Log.debug("Node ("+NAMESPACE_DATA+") does not have a data tag ("+user.toBareJID()+")");
@@ -178,27 +249,49 @@ public class XEP398IQHandler implements PacketInterceptor
         }
     }
 
+    private Avatar getAvatarFromVcard(JID from)
+    {
+        Element vcard = XMPPServer.getInstance().getVCardManager().getVCard(from.getNode());
+        if (vcard!=null)
+        {
+            Element vcardphoto = vcard.element("PHOTO");
+
+            if (vcardphoto==null)
+            {
+                vcardphoto=vcard.addElement("PHOTO");
+                vcardphoto.addElement("BINVAL");
+                vcardphoto.addElement("TYPE");
+            }
+
+            Element binval = vcardphoto.element("BINVAL");
+            Element type = vcardphoto.element("TYPE");
+            if (binval!=null&&type!=null&&binval.getTextTrim().length()>0&&type.getTextTrim().length()>0)
+            {
+                return buildAvatar(binval.getTextTrim(),type.getTextTrim());
+            }
+            else
+            {
+                return null;
+            }
+        }
+        else {
+            return null;
+        }
+    }
+
     private Avatar buildAvatar(String base64data, String type)
     {
         Avatar avatar = new Avatar();
         avatar.getMetadata().setType(type);
         avatar.setImage(base64data);
 
-        try
+        String hash = avatar.getMainHash();
+        if (hash!=null)
         {
-            String hash = Avatar.getSHA1Hash(avatar.getImageBytes());
-            if (hash!=null)
-            {
-                avatar.getMetadata().setId(hash);
-            }
-            else {
-                Log.error("buildAvatar: Could not calc. image hash!");
-                avatar.getMetadata().setId(null);
-            }
+            avatar.getMetadata().setId(hash);
         }
-        catch (NoSuchAlgorithmException e)
-        {
-            Log.error("buildAvatar: Could not calc. image hash! ",e.getMessage(),e);
+        else {
+            Log.error("buildAvatar: Could not calc. image hash!");
             avatar.getMetadata().setId(null);
         }
 
@@ -266,16 +359,16 @@ public class XEP398IQHandler implements PacketInterceptor
 
             IQ metadataiq = new IQ(Type.set);
             metadataiq.setFrom(jid);
-            metadataiq.setID(avatar.getMetadata().getId());
+            metadataiq.setID(avatar.getMainHash());
             Element metapubsub = metadataiq.setChildElement("pubsub", NAMESPACE_PUBSUB);
             Element metapublish = metapubsub.addElement("publish");
             metapublish.addAttribute("node", NAMESPACE_METADATA);
             Element metaitem = metapublish.addElement("item");
-            metaitem.addAttribute("id",avatar.getMetadata().getId());
+            metaitem.addAttribute("id",avatar.getMainHash());
             Element metadata = metaitem.addElement("metadata",NAMESPACE_METADATA);
             Element metainfo = metadata.addElement("info");
             metainfo.addAttribute("bytes",String.valueOf(avatar.getImageBytes().length));
-            metainfo.addAttribute("id",avatar.getMetadata().getId());
+            metainfo.addAttribute("id",avatar.getMainHash());
             metainfo.addAttribute("height",String.valueOf(avatar.getMetadata().getHeight()));
             metainfo.addAttribute("type",avatar.getMetadata().getType());
             metainfo.addAttribute("width",String.valueOf(avatar.getMetadata().getWidth()));
@@ -366,7 +459,7 @@ public class XEP398IQHandler implements PacketInterceptor
             Element publish = pubsub.addElement("publish");
             publish.addAttribute("node", NAMESPACE_DATA);
             Element item = publish.addElement("item");
-            item.addAttribute("id",avatar.getMetadata().getId());
+            item.addAttribute("id",avatar.getMainHash());
             Element data = item.addElement("data", NAMESPACE_DATA);
             data.setText(avatar.getImageString());
 
@@ -427,7 +520,7 @@ public class XEP398IQHandler implements PacketInterceptor
 
         try
         {
-            XMPPServer.getInstance().getVCardManager().setVCard(jid.getNode(), photo);
+            XMPPServer.getInstance().getVCardManager().setVCard(jid.getNode(), vCard);
         }
         catch (Exception e)
         {
@@ -481,15 +574,14 @@ public class XEP398IQHandler implements PacketInterceptor
             {
                 if (!shrinked)
                 {
-                    if (avatar.getMetadata().getId()!=null)
+                    if (avatar.getMainHash()!=null)
                     {
-                        photo.setText(avatar.getMetadata().getId());
+                        photo.setText(avatar.getMainHash());
                     }
                 }
                 else
                 {
-                    
-                    String sha1=avatar.getSHA1FromShrinkedImage();
+                    String sha1=avatar.getMainHashShrinked();
                     if (sha1!=null)
                     {
                         photo.setText(sha1);
@@ -507,6 +599,9 @@ public class XEP398IQHandler implements PacketInterceptor
     }
 
     private void handleIncomingIQ(IQ iq, Session session) {
+
+        if (iq.getType()!=Type.set)
+            return;
 
         if (iq.getChildElement()!=null)
         {
@@ -542,10 +637,10 @@ public class XEP398IQHandler implements PacketInterceptor
                                      * Services SHOULD verify that the SHA-1 hash of the image matches the id.
                                      * */
                                     
-                                    Avatar avatar = getAvatar(iq.getFrom());
+                                    Avatar avatar = getAvatarWithInfotag(iq.getFrom(),metadata.element("info"));
                                     if (avatar!=null)
                                     {
-                                        if (avatar.getCalculatedHash().equalsIgnoreCase(avatar.getMetadata().getId()))
+                                        if (avatar.isValidHash(avatar.getMetadata().getId()))
                                         {
                                             if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
                                             {
@@ -580,7 +675,7 @@ public class XEP398IQHandler implements PacketInterceptor
                 if (childns.equalsIgnoreCase(NAMESPACE_VCARD_TEMP))
                 {
                     Element vcard = null;
-                    if ((vcard=iq.getElement().element("vCard"))!=null&&iq.getElement().attributeValue("type").equalsIgnoreCase("set"))
+                    if ((vcard=iq.getElement().element("vCard"))!=null)
                     {
                         //We got a vcard, check if is empty or net
                         if (vcard.hasContent())
@@ -614,13 +709,21 @@ public class XEP398IQHandler implements PacketInterceptor
 
                                          routeDataToServer(iq.getFrom(), avatar);
                                          routeMetaDataToServer(iq.getFrom(), avatar);
-                                         if (!XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
+                                         /*if (!XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
                                          {
-                                             routeVCardUpdateToServer(null, avatar);
-                                         }
+                                             routeVCardUpdateToServer(iq.getFrom(), avatar);
+                                         }*/
                                     }
                                 }
                             }
+                            else {
+                                deleteVCardAvatar(iq.getFrom());
+                                deletePEPAvatar(iq.getFrom());
+                            }
+                        }
+                        else {
+                            deleteVCardAvatar(iq.getFrom());
+                            deletePEPAvatar(iq.getFrom());
                         }
                     }
                 }
@@ -635,6 +738,11 @@ public class XEP398IQHandler implements PacketInterceptor
     {
         Element x = p.getChildElement("x", NAMESPACE_VCARD_TEMP_X_UPDATE);
         Avatar avatar = getAvatar(p.getFrom());
+
+        if (avatar==null)
+        {
+            avatar = getAvatarFromVcard(p.getFrom());
+        }
 
         if (avatar!=null)
         {
@@ -665,13 +773,13 @@ public class XEP398IQHandler implements PacketInterceptor
 
                 if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
                 {
-                    photo.setText(avatar.getMetadata().getId());
+                    photo.setText(avatar.getMainHash());
                 }
                 else 
                 {
                     if (XEP398Plugin.XMPP_SHRINKVCARDIMG_ENABLED.getValue())
                     {
-                        String hash = avatar.getSHA1FromShrinkedImage();
+                        String hash = avatar.getMainHashShrinked();
                         Log.warn(hash);
                         if (hash!=null)
                         {
@@ -684,13 +792,9 @@ public class XEP398IQHandler implements PacketInterceptor
                     }
                     else
                     {
-                        photo.setText(avatar.getMetadata().getId());
+                        photo.setText(avatar.getMainHash());
                     }
                 }
-            }
-            else 
-            {
-                deletePEPAvatar(p.getFrom());
             }
         }
     }
@@ -724,17 +828,31 @@ public class XEP398IQHandler implements PacketInterceptor
         Element vcard = XMPPServer.getInstance().getVCardManager().getVCard(from.getNode());
         Element vcardphoto = vcard.element("PHOTO");
 
-        if (vcardphoto!=null)
+        if (vcardphoto==null)
         {
-            vcard.remove(vcardphoto);
-            try
-            {
-                XMPPServer.getInstance().getVCardManager().setVCard(from.getNode(), vcard);
-            }
-            catch (Exception e)
-            {
-                Log.error("Could not update vcard: "+e.getMessage());
-            }
+            vcardphoto=vcard.addElement("PHOTO");
+            vcardphoto.addElement("BINVAL");
+            vcardphoto.addElement("TYPE");
+        }
+
+        Element binval = vcardphoto.element("BINVAL");
+        Element type = vcardphoto.element("TYPE");
+        if (binval!=null)
+        {
+            binval.setText("");
+        }
+        if (type!=null)
+        {
+            type.setText("");
+        }
+
+        try
+        {
+            XMPPServer.getInstance().getVCardManager().setVCard(from.getNode(), vcard);
+        }
+        catch (Exception e)
+        {
+            Log.error("Could not update vcard: "+e.getMessage());
         }
     }
 }

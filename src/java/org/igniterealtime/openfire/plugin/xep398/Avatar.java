@@ -22,22 +22,18 @@ public class Avatar {
 
     private static final Logger Log = LoggerFactory.getLogger(Avatar.class);
 
-    private byte[] image    = null;
     private String avatar_base64 = null;
-    private String hash;
-    private Metadata metadata = null; 
+    private String rawHash = null;
+    private String shrinkedHash = null;
+
+    private AvatarMetadata metadata = null;
 
     public Avatar() {
-        this.metadata = new Metadata();
+        this.metadata = new AvatarMetadata();
     }
 
-    public Metadata getMetadata() {
+    public AvatarMetadata getMetadata() {
         return this.metadata;
-    }
-
-    public byte[] getImageBytes()
-    {
-        return image;
     }
 
     public String getImageString()
@@ -45,126 +41,86 @@ public class Avatar {
         return avatar_base64;
     }
 
-    public void setImage(byte[] image)
-    {
-        setImage(image,false,true);
-    }
-    
-    public void setImage(byte[] image, boolean b64urldecode, boolean retry)
-    {
-        int params = 0;//Base64.DONT_BREAK_LINES;
-        if (b64urldecode)
-        {
-            params|=Base64.URL_SAFE;
-        }
-        
-        this.avatar_base64 = Base64.encodeBytes(image,params);
-        this.image = image;
+    public byte[] getImageBytes() {
+        byte[] result = null;
         try {
-            this.hash=getSHA1Hash(this.image);
+            result = Base64.decode(this.avatar_base64);
         }
         catch (Exception e)
         {
-            Log.error("Could not calc hash of image");
+            result = Base64.decode(this.avatar_base64,Base64.DONT_BREAK_LINES);
         }
 
-        BufferedImage img = Avatar.getImageFromBytes(image);
-        if (img==null&&retry)
-        {
-            setImage(image,true,false);
+        return result;
+    }
+
+    public String getMainHash() {
+        return rawHash;
+    }
+
+    public String getMainHashShrinked() {
+        return shrinkedHash;
+    }
+
+    public boolean isValidHash(String test)
+    {
+        return test.equalsIgnoreCase(rawHash);
+    }
+
+    private boolean calHashes() {
+        byte[] raw = Base64.decode(this.avatar_base64);
+        byte[] shrinked = getShrinkedImage(Base64.decode(this.avatar_base64));
+
+        try {
+            rawHash=getSHA1Hash(raw);
         }
-        
-        if (img!=null) 
+        catch (Exception e)
         {
-            this.getMetadata().setHeight(img.getHeight());
-            this.getMetadata().setWidth(img.getWidth());
+            Log.error("Error while calculating Hashes (Index 0): ",e);
+            return false;
         }
-        else
+
+        try {
+            shrinkedHash=getSHA1Hash(shrinked);
+        }
+        catch (Exception e)
         {
-            Log.error("Could not set height/width of image");
+            Log.error("Error while calculating Hashes (Index 4): ",e);
         }
+
+        return true;
     }
 
     public void setImage(String binval)
     {
-        setImage(binval,false,true);
-    }
+        this.avatar_base64 = binval.trim();
 
-    public void setImage(String binval, boolean b64urldecode, boolean retry)
-    {
-        this.avatar_base64 = binval;
-        int params = 0;//Base64.DONT_BREAK_LINES;
-        if (b64urldecode)
+        if (calHashes())
         {
-            params|=Base64.URL_SAFE;
-        }
-        this.image= Base64.decode(binval,params);
+            byte[] image;
+            image =  Base64.decode(this.avatar_base64);
 
-        try {
-            this.hash=getSHA1Hash(this.image);
-        }
-        catch (Exception e)
-        {
-            Log.error("Could not calc hash of image");
-        }
-
-        BufferedImage img = Avatar.getImageFromBytes(image);
-        if (img==null&&retry)
-        {
-            setImage(binval,true,false);
-        }
-
-        if (img!=null)
-        {
-            this.getMetadata().setHeight(img.getHeight());
-            this.getMetadata().setWidth(img.getWidth());
-        }
-        else
-        {
-            Log.error("Could not set height/width of image");
-        }
-    }
-
-    public String getCalculatedHash() {
-        return this.hash;
-    }
-
-    public String getSHA1FromShrinkedImage()
-    {
-        String mimetype = getMetadata().getType();
-        if (getImageBytes()==null||mimetype==null)
-            return null;
-        
-        final Iterator it = ImageIO.getImageWritersByMIMEType( mimetype );
-        if ( !it.hasNext() )
-        {
-            Log.warn("getSHA1FromShrinkedImage: Cannot resize avatar. No writers available for MIME type {}.", mimetype );
-            return null;
-        }
-        final ImageWriter iw = (ImageWriter) it.next();
-
-        final int targetDimension = JiveGlobals.getIntProperty( PhotoResizer.PROPERTY_TARGETDIMENSION, PhotoResizer.PROPERTY_TARGETDIMENSION_DEFAULT );
-        final byte[] resized = PhotoResizer.cropAndShrink( image, targetDimension, iw );
-        if (resized!=null)
-        {
-            try {
-                return getSHA1Hash(resized);
-            } catch (NoSuchAlgorithmException e) {
-                Log.warn("getSHA1FromShrinkedImage: Cannot resize avatar. "+e.getMessage());
-                return null;
+            BufferedImage img = Avatar.getImageFromBytes(image);
+            if (img!=null)
+            {
+                this.getMetadata().setHeight(img.getHeight());
+                this.getMetadata().setWidth(img.getWidth());
             }
-        }
-        else
-        {
-            Log.warn("getSHA1FromShrinkedImage: Cannot resize avatar. PhotoResizer.cropAndShrink failed!");
-            return null;
+            else
+            {
+                Log.error("Could not set height/width of image");
+            }
         }
     }
     
-    public String getShrinkedImage()
+    public String getShrinkedImage() {
+        return Base64.encodeBytes(getShrinkedImage(Base64.decode(this.avatar_base64)));
+    }
+
+    private byte[] getShrinkedImage(byte[] image)
     {
         String mimetype = getMetadata().getType();
-        if (getImageBytes()==null||mimetype==null)
+        if (image==null||mimetype==null)
             return null;
         
         final Iterator it = ImageIO.getImageWritersByMIMEType( mimetype );
@@ -179,12 +135,7 @@ public class Avatar {
         final byte[] resized = PhotoResizer.cropAndShrink( image, targetDimension, iw );
         if (resized!=null)
         {
-            try {
-                return Base64.encodeBytes(resized);
-            } catch (Exception e) {
-                Log.warn("getShrinkedImage: Cannot resize avatar. "+e.getMessage());
-                return null;
-            }
+            return resized;
         }
         else
         {

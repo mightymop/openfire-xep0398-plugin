@@ -1,6 +1,6 @@
 package org.igniterealtime.openfire.plugin.xep398;
 
-public class Metadata {
+public class AvatarMetadata {
     private String id       = null;  //ID = SHA1-HASH of field image
     private int height      = -1;
     private int width       = -1;
