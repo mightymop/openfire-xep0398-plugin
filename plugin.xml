@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin>
+    <class>org.igniterealtime.openfire.plugin.xep398.XEP398Plugin</class>
+    <name>${project.name}</name>
+    <description>${project.description}</description>
+    <author>mightymop</author>
+    <version>${project.version}</version>
+    <date>10/13/2021</date>
+    <minServerVersion>4.4.0</minServerVersion>
+    <minJavaVersion>1.8</minJavaVersion>
+    <adminconsole>
+        <tab id="tab-server">
+            <sidebar id="sidebar-server-settings">
+                <item id="server-avatar-conversion" name="${sidebar.avatar-conversion}" url="avatar-conversion.jsp" description="${sidebar.avatar-conversion.descr}"/>
+            </sidebar>
+        </tab>
+    </adminconsole>
+</plugin>
