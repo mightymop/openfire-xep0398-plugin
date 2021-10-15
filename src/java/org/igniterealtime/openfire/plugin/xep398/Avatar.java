@@ -81,7 +81,10 @@ public class Avatar {
         }
 
         try {
-            shrinkedHash=getSHA1Hash(shrinked);
+            if (shrinked!=null)
+            {
+                shrinkedHash=getSHA1Hash(shrinked);
+            }
         }
         catch (Exception e)
         {
@@ -114,7 +117,28 @@ public class Avatar {
     }
     
     public String getShrinkedImage() {
-        return Base64.encodeBytes(getShrinkedImage(Base64.decode(this.avatar_base64)));
+        try {
+            byte[] imgdata = Base64.decode(this.avatar_base64);
+            if (imgdata!=null)
+            {
+                byte[] shrinked = getShrinkedImage(imgdata);
+                if (shrinked!=null)
+                {
+                    return Base64.encodeBytes(shrinked);
+                }
+                else {
+                    return this.avatar_base64;
+                }
+            }
+            else {
+                return this.avatar_base64;
+            }
+        }
+        catch (Exception e)
+        {
+            Log.warn(e.getMessage(),e);
+            return this.avatar_base64;
+        }
     }
 
     private byte[] getShrinkedImage(byte[] image)
