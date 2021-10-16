@@ -21,9 +21,13 @@ import org.jivesoftware.openfire.XMPPServer;
 import org.jivesoftware.openfire.container.Plugin;
 import org.jivesoftware.openfire.container.PluginManager;
 import org.jivesoftware.openfire.interceptor.InterceptorManager;
+import org.jivesoftware.util.JiveGlobals;
 import org.jivesoftware.util.SystemProperty;
+import org.jivesoftware.util.cache.Cache;
+import org.jivesoftware.util.cache.CacheFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.xmpp.packet.JID;
 
 /**
  * An Openfire plugin that integrates XEP-0398.
@@ -60,14 +64,25 @@ public class XEP398Plugin implements Plugin
             .setDynamic(true)
             .build();
 
+    private Cache<String, String> cache = null;
 
     @Override
     public void initializePlugin( PluginManager manager, File pluginDirectory )
     {
         SystemProperty.removePropertiesForPlugin("xep398");
         Log.info("Initialize XEP-0398 Plugin enabled:"+XMPP_AVATARCONVERSION_ENABLED.getDisplayValue()+" store only in pep="+XMPP_DELETEOTHERAVATAR_ENABLED.getDisplayValue());
-        this.xep398Handler = new XEP398IQHandler();
+        this.xep398Handler = new XEP398IQHandler(this);
         InterceptorManager.getInstance().addInterceptor(this.xep398Handler);
+        if (JiveGlobals.getLongProperty("cache.XEP398.maxLifetime", 0)==0)
+        {
+            JiveGlobals.setProperty("cache.XEP398.maxLifetime","3600000");
+        }
+        if (JiveGlobals.getLongProperty("cache.XEP398.size", 0)==0)
+        {
+            JiveGlobals.setProperty("cache.XEP398.size","20971520");
+        }
+        cache = CacheFactory.createCache("XEP398");
+
         XMPPServer.getInstance().getIQDiscoInfoHandler().addServerFeature(NAMESPACE_XEP398);
     }
 
@@ -79,4 +94,9 @@ public class XEP398Plugin implements Plugin
         InterceptorManager.getInstance().removeInterceptor(this.xep398Handler);
         this.xep398Handler = null;
     }
+
+    public Cache<String, String> getCache() {
+        return cache;
+    }
+
 }

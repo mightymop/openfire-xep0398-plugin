@@ -8,7 +8,7 @@
     </parent>
     <groupId>org.igniterealtime.openfire.plugins</groupId>
     <artifactId>xep398</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <name>XEP-0398</name>
     <description>Adds Avatarconversion XEP-0398 to Openfire.</description>
     <build>
@@ -33,6 +33,14 @@
             <url>https://igniterealtime.org/archiva/repository/maven/</url>
         </repository>
     </repositories>
+    
+    <dependencies>
+        <dependency>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>20180813</version>
+        </dependency>
+    </dependencies>
 
     <pluginRepositories>
         <!-- Typically used to retrieve Maven plugins that are used by this project.

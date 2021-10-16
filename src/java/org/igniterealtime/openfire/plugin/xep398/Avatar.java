@@ -4,6 +4,7 @@ import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.Serializable;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Formatter;
@@ -15,6 +16,8 @@ import javax.imageio.ImageWriter;
 import org.jivesoftware.openfire.vcard.PhotoResizer;
 import org.jivesoftware.util.Base64;
 import org.jivesoftware.util.JiveGlobals;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -23,6 +26,7 @@ public class Avatar {
     private static final Logger Log = LoggerFactory.getLogger(Avatar.class);
 
     private String avatar_base64 = null;
+    private String avatar_base64shrinked = null;
     private String rawHash = null;
     private String shrinkedHash = null;
 
@@ -44,11 +48,11 @@ public class Avatar {
     public byte[] getImageBytes() {
         byte[] result = null;
         try {
-            result = Base64.decode(this.avatar_base64);
+            result = Base64.decode(this.avatar_base64,Base64.DONT_BREAK_LINES);
         }
         catch (Exception e)
         {
-            result = Base64.decode(this.avatar_base64,Base64.DONT_BREAK_LINES);
+            result = Base64.decode(this.avatar_base64);
         }
 
         return result;
@@ -68,8 +72,8 @@ public class Avatar {
     }
 
     private boolean calHashes() {
-        byte[] raw = Base64.decode(this.avatar_base64);
-        byte[] shrinked = getShrinkedImage(Base64.decode(this.avatar_base64));
+        byte[] raw = getImageBytes();
+        byte[] shrinked = getShrinkedImage(raw);
 
         try {
             rawHash=getSHA1Hash(raw);
@@ -96,12 +100,11 @@ public class Avatar {
 
     public void setImage(String binval)
     {
-        this.avatar_base64 = binval.trim();
+        this.avatar_base64 = Base64.encodeBytes(Base64.decode(binval.trim(), Base64.DONT_BREAK_LINES),Base64.DONT_BREAK_LINES);
 
         if (calHashes())
         {
-            byte[] image;
-            image =  Base64.decode(this.avatar_base64);
+            byte[] image = getImageBytes();
 
             BufferedImage img = Avatar.getImageFromBytes(image);
             if (img!=null)
@@ -113,31 +116,47 @@ public class Avatar {
             {
                 Log.error("Could not set height/width of image");
             }
+            
+            String tmp = calcShrinkedImage();
+            if (tmp!=null)
+            {
+                this.avatar_base64shrinked=tmp;
+            }
         }
     }
-    
+
     public String getShrinkedImage() {
+        return avatar_base64shrinked;
+    }
+
+    private String calcShrinkedImage() {
         try {
-            byte[] imgdata = Base64.decode(this.avatar_base64);
+            byte[] imgdata = getImageBytes();
             if (imgdata!=null)
             {
                 byte[] shrinked = getShrinkedImage(imgdata);
                 if (shrinked!=null)
                 {
-                    return Base64.encodeBytes(shrinked);
+                    try {
+                        return Base64.encodeBytes(shrinked,Base64.DONT_BREAK_LINES);
+                    }
+                    catch (Exception e)
+                    {
+                        return Base64.encodeBytes(shrinked);
+                    }
                 }
                 else {
-                    return this.avatar_base64;
+                    return null;
                 }
             }
             else {
-                return this.avatar_base64;
+                return null;
             }
         }
         catch (Exception e)
         {
             Log.warn(e.getMessage(),e);
-            return this.avatar_base64;
+            return null;
         }
     }
 
@@ -150,7 +169,7 @@ public class Avatar {
         final Iterator it = ImageIO.getImageWritersByMIMEType( mimetype );
         if ( !it.hasNext() )
         {
-            Log.warn("getShrinkedImage: Cannot resize avatar. No writers available for MIME type {}.", mimetype );
+            Log.debug("getShrinkedImage: Cannot resize avatar. No writers available for MIME type {}.", mimetype );
             return null;
         }
         final ImageWriter iw = (ImageWriter) it.next();
@@ -163,7 +182,7 @@ public class Avatar {
         }
         else
         {
-            Log.warn("getShrinkedImage: Cannot resize avatar. PhotoResizer.cropAndShrink failed!");
+            Log.debug("getShrinkedImage: Cannot resize avatar. PhotoResizer.cropAndShrink failed!");
             return null;
         }
     }
@@ -221,9 +240,63 @@ public class Avatar {
             formatter.close();
         }
     }
+    
+    public static Avatar parse(String jsonstr)
+    {
+
+        try { 
+            JSONObject json = new JSONObject(jsonstr.trim());
+
+            Avatar result = new Avatar();
+            AvatarMetadata meta = new AvatarMetadata();
+
+            result.avatar_base64 = json.has("base64")&&json.getString("base64")!=null&&!json.getString("base64").isEmpty()?json.getString("base64"):null;
+            if (result.avatar_base64==null)
+            {
+                return null;
+            }
+
+            result.shrinkedHash = json.has("hashshrinked")&&json.getString("hashshrinked")!=null&&!json.getString("hashshrinked").isEmpty()?json.getString("hashshrinked"):null;
+            result.avatar_base64shrinked=json.has("base64shrinked")&&json.getString("base64shrinked")!=null&&!json.getString("base64shrinked").isEmpty()?json.getString("base64shrinked"):null;
+
+            result.metadata=meta;
+            if (json.has("metadata"))
+            {
+                JSONObject metadata = json.getJSONObject("metadata");
+                meta.setId(metadata.has("id")&&metadata.getString("id")!=null&&!metadata.getString("id").isEmpty()?metadata.getString("id"):null);
+                meta.setWidth(metadata.has("height")&&metadata.getString("height")!=null&&!metadata.getString("height").isEmpty()?Integer.parseInt(metadata.getString("height")):0);
+                meta.setHeight(metadata.has("width")&&metadata.getString("width")!=null&&!metadata.getString("width").isEmpty()?Integer.parseInt(metadata.getString("width")):0);
+                meta.setType(metadata.has("type")&&metadata.getString("type")!=null&&!metadata.getString("type").isEmpty()?metadata.getString("type"):null);
+                result.rawHash=meta.getId();
+            }
+            
+            return result;
+          }
+        catch (JSONException e)
+        {
+            Log.error("Could not parse Avatar Json: {}\n{}", e.getMessage(),jsonstr);
+            return null;
+        }
+    }
 
     @Override
     public String toString() {
-        return "{\"base64\":\""+avatar_base64+"\",\"metadata\":"+metadata.toString()+"}";
+        if (this.shrinkedHash!=null)
+        {
+            return "{\n"+
+                   "\"base64\":\""+avatar_base64+"\",\n"+
+                   "\"base64shrinked\":\""+this.avatar_base64shrinked+"\",\n"+
+                   "\"hashshrinked\":\""+this.shrinkedHash+"\",\n"+
+                   "\"metadata\":"+metadata.toString()+"\n"+
+                   "}";
+        }
+        else {
+            return "{\n"+
+                    "\"base64\":\""+avatar_base64+"\",\n"+
+                    "\"base64shrinked\":\"\",\n"+
+                    "\"hashshrinked\":\"\",\n"+
+                    "\"metadata\":"+metadata.toString()+"\n"+
+                    "}";
+        }
     }
 }

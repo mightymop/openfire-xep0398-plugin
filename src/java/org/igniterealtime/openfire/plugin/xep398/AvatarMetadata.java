@@ -48,9 +48,11 @@ public class AvatarMetadata {
 
     @Override
     public String toString() {
-        return "    {\"id\":\""+id+"\","
-                + "\"height\":\""+String.valueOf(height)+"\","
-                + "\"width\":\""+String.valueOf(width)+"\","
-                + "\"type\":\""+type+"\"}";
+        return    "{\n"+
+                  "\"id\":\""+id+"\",\n"
+                + "\"height\":\""+String.valueOf(height)+"\",\n"
+                + "\"width\":\""+String.valueOf(width)+"\",\n"
+                + "\"type\":\""+type+"\"\n"
+                + "}";
     }
 }

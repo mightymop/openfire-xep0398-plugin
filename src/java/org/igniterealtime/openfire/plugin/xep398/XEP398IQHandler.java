@@ -21,6 +21,8 @@ import org.jivesoftware.openfire.pubsub.PublishedItem;
 import org.jivesoftware.openfire.session.Session;
 import org.jivesoftware.openfire.user.User;
 import org.jivesoftware.openfire.user.UserNotFoundException;
+import org.jivesoftware.util.cache.Cache;
+import org.jivesoftware.util.cache.CacheFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmpp.packet.IQ;
@@ -44,10 +46,13 @@ public class XEP398IQHandler implements PacketInterceptor
 
     private PEPServiceManager pepmgr;
 
+    private XEP398Plugin plugin;
+
     //Constructors
-    public XEP398IQHandler()
+    public XEP398IQHandler(XEP398Plugin reference)
     {
         pepmgr = XMPPServer.getInstance().getIQPEPHandler().getServiceManager();
+        this.plugin=reference;
     }
 
     public PEPService getPEPFromUser(JID userjid)
@@ -77,6 +82,7 @@ public class XEP398IQHandler implements PacketInterceptor
     {
         Log.debug("Read Avatar from PEPService ("+user.toBareJID()+")");
         Avatar result = null;
+
         PEPService pep = getPEPFromUser(user);
         if (pep!=null)
         {
@@ -147,8 +153,19 @@ public class XEP398IQHandler implements PacketInterceptor
 
     public Avatar getAvatar(JID user)
     {
-        Log.debug("Read Avatar from PEPService ("+user.toBareJID()+")");
         Avatar result = null;
+        if (this.plugin.getCache().containsKey(user.toBareJID()))
+        {
+            String cachedAvatar = this.plugin.getCache().get(user.toBareJID());
+            result = Avatar.parse(cachedAvatar);
+            if (result != null)
+            {
+                return result;
+            }
+        }
+
+        Log.debug("Read Avatar from PEPService ("+user.toBareJID()+")");
+
         PEPService pep = getPEPFromUser(user);
         if (pep!=null)
         {
@@ -236,6 +253,7 @@ public class XEP398IQHandler implements PacketInterceptor
                     return null;
                 }
 
+                this.plugin.getCache().put(user.toBareJID(), result.toString());
                 return result;
             }
             else {
@@ -251,6 +269,17 @@ public class XEP398IQHandler implements PacketInterceptor
 
     private Avatar getAvatarFromVcard(JID from)
     {
+        Avatar result = null;
+        if (this.plugin.getCache().containsKey(from.toBareJID()))
+        {
+            String cachedAvatar = this.plugin.getCache().get(from.toBareJID());
+            result = Avatar.parse(cachedAvatar);
+            if (result != null)
+            {
+                return result;
+            }
+        }
+
         Element vcard = XMPPServer.getInstance().getVCardManager().getVCard(from.getNode());
         if (vcard!=null)
         {
@@ -267,7 +296,9 @@ public class XEP398IQHandler implements PacketInterceptor
             Element type = vcardphoto.element("TYPE");
             if (binval!=null&&type!=null&&binval.getTextTrim().length()>0&&type.getTextTrim().length()>0)
             {
-                return buildAvatar(binval.getTextTrim(),type.getTextTrim());
+                result = buildAvatar(binval.getTextTrim(),type.getTextTrim());
+                this.plugin.getCache().put(from.toBareJID(), result.toString());
+                return result;
             }
             else
             {
@@ -304,6 +335,7 @@ public class XEP398IQHandler implements PacketInterceptor
             catch (IOException e)
             {
                 Log.error("buildAvatar: Could not set mime type of image");
+                avatar.getMetadata().setType("image/*");
             }
         }
 
@@ -417,6 +449,7 @@ public class XEP398IQHandler implements PacketInterceptor
      * */
     public void deletePEPAvatar(JID jid)
     {
+
         deleteOldDataNode(jid);
 
         deleteOldMetadataNode(jid);
@@ -640,6 +673,7 @@ public class XEP398IQHandler implements PacketInterceptor
                                     Avatar avatar = getAvatarWithInfotag(iq.getFrom(),metadata.element("info"));
                                     if (avatar!=null)
                                     {
+                                        this.plugin.getCache().put(iq.getFrom().toBareJID(), avatar.toString());
                                         if (avatar.isValidHash(avatar.getMetadata().getId()))
                                         {
                                             if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
@@ -664,6 +698,7 @@ public class XEP398IQHandler implements PacketInterceptor
                     {
                         //Delete an avatar here
                         Log.debug("Processing incoming pubsub / pep avatar retract/delete (XEP-0084)");
+                        this.plugin.getCache().remove(iq.getFrom().toBareJID());
                         if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
                         {
                             deleteVCardAvatar(iq.getFrom());
@@ -706,6 +741,7 @@ public class XEP398IQHandler implements PacketInterceptor
                                          * */
 
                                          Avatar avatar = buildAvatar(binval.getText(), type.getText());
+                                         this.plugin.getCache().put(iq.getFrom().toBareJID(), avatar.toString());
 
                                          routeDataToServer(iq.getFrom(), avatar);
                                          routeMetaDataToServer(iq.getFrom(), avatar);
@@ -717,11 +753,13 @@ public class XEP398IQHandler implements PacketInterceptor
                                 }
                             }
                             else {
+                                this.plugin.getCache().remove(iq.getFrom().toBareJID());
                                 deleteVCardAvatar(iq.getFrom());
                                 deletePEPAvatar(iq.getFrom());
                             }
                         }
                         else {
+                            this.plugin.getCache().remove(iq.getFrom().toBareJID());
                             deleteVCardAvatar(iq.getFrom());
                             deletePEPAvatar(iq.getFrom());
                         }
