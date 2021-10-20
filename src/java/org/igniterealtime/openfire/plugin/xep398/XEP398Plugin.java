@@ -27,7 +27,6 @@ import org.jivesoftware.util.cache.Cache;
 import org.jivesoftware.util.cache.CacheFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.xmpp.packet.JID;
 
 /**
  * An Openfire plugin that integrates XEP-0398.
@@ -56,7 +55,14 @@ public class XEP398Plugin implements Plugin
             .setDefaultValue(false)
             .setDynamic(true)
             .build();
-    
+
+    public static final SystemProperty<Boolean> XMPP_XEP0008_ENABLED = SystemProperty.Builder.ofType(Boolean.class)
+            .setKey("xmpp.xep0398.enablexep0008")
+            .setPlugin( "xep398" )
+            .setDefaultValue(false)
+            .setDynamic(true)
+            .build();
+
     public static final SystemProperty<Boolean> XMPP_SHRINKVCARDIMG_ENABLED = SystemProperty.Builder.ofType(Boolean.class)
             .setKey("xmpp.xep0398.shrinkvcardimg")
             .setPlugin( "xep398" )
@@ -84,6 +90,7 @@ public class XEP398Plugin implements Plugin
         cache = CacheFactory.createCache("XEP398");
 
         XMPPServer.getInstance().getIQDiscoInfoHandler().addServerFeature(NAMESPACE_XEP398);
+        XMPPServer.getInstance().getIQDiscoInfoHandler().addServerFeature(XEP398IQHandler.NAMESPACE_JABBER_IQ_AVATAR);
     }
 
     @Override
@@ -91,7 +98,9 @@ public class XEP398Plugin implements Plugin
     {
         Log.info("Destroy XEP-0398 Plugin");
         XMPPServer.getInstance().getIQDiscoInfoHandler().removeServerFeature(NAMESPACE_XEP398);
+        XMPPServer.getInstance().getIQDiscoInfoHandler().removeServerFeature(XEP398IQHandler.NAMESPACE_JABBER_IQ_AVATAR);
         InterceptorManager.getInstance().removeInterceptor(this.xep398Handler);
+        this.xep398Handler.removeHandlers();
         this.xep398Handler = null;
     }
 

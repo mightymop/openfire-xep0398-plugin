@@ -39,6 +39,7 @@
 
     boolean avatarconversionEnabled = ParamUtils.getParameter(request,"avatarconversionEnabled")!=null&&ParamUtils.getParameter(request,"avatarconversionEnabled").equals("on")?true:false;
     boolean deleteotherEnabled = ParamUtils.getParameter(request,"deleteotherEnabled")!=null&&ParamUtils.getParameter(request,"deleteotherEnabled").equals("on")?true:false;
+    boolean xep0008Enabled = ParamUtils.getParameter(request,"xep0008Enabled")!=null&&ParamUtils.getParameter(request,"xep0008Enabled").equals("on")?true:false;
 
     Cookie csrfCookie = CookieUtils.getCookie(request, "csrf");
     String csrfParam = ParamUtils.getParameter(request, "csrf");
@@ -55,6 +56,7 @@
     if (update) {
         XEP398Plugin.XMPP_AVATARCONVERSION_ENABLED.setValue(avatarconversionEnabled);
         XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.setValue(deleteotherEnabled);
+        XEP398Plugin.XMPP_XEP0008_ENABLED.setValue(xep0008Enabled);
         // Log the event
         webManager.logEvent((avatarconversionEnabled ? "enabled" : "disabled")+" avatarconversion", null);
     %>
@@ -75,6 +77,7 @@
     // Set page vars
     avatarconversionEnabled = XEP398Plugin.XMPP_AVATARCONVERSION_ENABLED.getValue();
     deleteotherEnabled = XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue();
+    xep0008Enabled = XEP398Plugin.XMPP_XEP0008_ENABLED.getValue();
 
 %>
 
@@ -106,6 +109,17 @@
                     <label for="deleteotherEnabled">
                      <b><fmt:message key="avatarconversion.settings.deleteotheravatar" /></b> -
                      <fmt:message key="avatarconversion.settings.deleteotheravatar_info" />
+                    </label>
+                </td>
+            </tr>
+             <tr valign="top">
+                <td width="1%" nowrap>
+                    <input type="checkbox" name="xep0008Enabled" id="xep0008Enabled"  <%=(xep0008Enabled?"checked" : "")%>>
+                </td>
+                <td width="99%">
+                    <label for="xep0008Enabled">
+                     <b><fmt:message key="avatarconversion.settings.enablexep0008" /></b> -
+                     <fmt:message key="avatarconversion.settings.enablexep0008_info" />
                     </label>
                 </td>
             </tr>

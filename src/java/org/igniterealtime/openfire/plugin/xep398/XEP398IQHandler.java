@@ -3,13 +3,16 @@ package org.igniterealtime.openfire.plugin.xep398;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URLConnection;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 import org.dom4j.Element;
+import org.jivesoftware.openfire.IQHandlerInfo;
+import org.jivesoftware.openfire.IQRouter;
 import org.jivesoftware.openfire.XMPPServer;
+import org.jivesoftware.openfire.auth.UnauthorizedException;
+import org.jivesoftware.openfire.handler.IQHandler;
 import org.jivesoftware.openfire.interceptor.PacketInterceptor;
 import org.jivesoftware.openfire.interceptor.PacketRejectedException;
 import org.jivesoftware.openfire.pep.PEPService;
@@ -21,8 +24,6 @@ import org.jivesoftware.openfire.pubsub.PublishedItem;
 import org.jivesoftware.openfire.session.Session;
 import org.jivesoftware.openfire.user.User;
 import org.jivesoftware.openfire.user.UserNotFoundException;
-import org.jivesoftware.util.cache.Cache;
-import org.jivesoftware.util.cache.CacheFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xmpp.packet.IQ;
@@ -44,15 +45,41 @@ public class XEP398IQHandler implements PacketInterceptor
     public static String NAMESPACE_VCARD_TEMP = "vcard-temp";
     public static String NAMESPACE_VCARD_TEMP_X_UPDATE="vcard-temp:x:update";
 
+    //XEP-0008
+    public static String NAMESPACE_JABBER_X_AVATAR = "jabber:x:avatar";
+    public static String NAMESPACE_JABBER_IQ_AVATAR = "jabber:iq:avatar";
+
+    public static String NAMESPACE_STORAGE_CLIENT_AVATAR = "storage:client:avatar";
+
     private PEPServiceManager pepmgr;
 
     private XEP398Plugin plugin;
 
+    private StorageClientAvatarHandler storageHandler;
+    private JabberIQAvatarHandler jabberAvatarHandler;
+
+    private IQRouter iqRouter;
     //Constructors
     public XEP398IQHandler(XEP398Plugin reference)
     {
         pepmgr = XMPPServer.getInstance().getIQPEPHandler().getServiceManager();
         this.plugin=reference;
+        this.storageHandler = new StorageClientAvatarHandler(this.plugin);
+        this.jabberAvatarHandler = new JabberIQAvatarHandler();
+        this.iqRouter = XMPPServer.getInstance().getIQRouter();
+        this.storageHandler.initialize( XMPPServer.getInstance());
+        this.jabberAvatarHandler.initialize( XMPPServer.getInstance());
+        this.jabberAvatarHandler.start();
+        this.storageHandler.start();
+        this.iqRouter.addHandler(this.storageHandler);
+        this.iqRouter.addHandler(this.jabberAvatarHandler);
+    }
+
+    public void removeHandlers() {
+        this.iqRouter.removeHandler(this.storageHandler);
+        this.iqRouter.removeHandler(this.jabberAvatarHandler);
+        this.storageHandler.stop();
+        this.jabberAvatarHandler.stop();
     }
 
     public PEPService getPEPFromUser(JID userjid)
@@ -342,6 +369,41 @@ public class XEP398IQHandler implements PacketInterceptor
         return avatar;
     }
 
+    private IQ getResult(JID avatarjid, JID receiver,String namespace, String id)
+    {
+        IQ iq = new IQ(Type.result);
+        iq.setFrom(new JID(XMPPServer.getInstance().getServerInfo().getXMPPDomain()));
+        iq.setTo(receiver);
+        iq.setID(id);
+        return iq;
+    }
+
+    private IQ getXEP0008Avatar(JID avatarjid, JID receiver,String namespace, String id)
+    {
+        Avatar avatar = getAvatar(avatarjid);
+
+        IQ iq = new IQ();
+        iq.setFrom(new JID(XMPPServer.getInstance().getServerInfo().getXMPPDomain()));
+        iq.setTo(receiver);
+        iq.setID(id);
+        if (avatar!=null)
+        {
+
+            iq.setType(Type.result);
+
+            Element query = iq.setChildElement("query", namespace);
+            Element data = query.addElement("data");
+            data.addAttribute("mimetype", avatar.getMetadata().getType());
+            data.setText(avatar.getImageString());
+
+            return iq;
+        }
+        else {
+
+            return getError(receiver, namespace, "cancel", "404", "item-not-found", "urn:ietf:params:xml:ns:xmpp-stanzas");
+        }
+
+    }
     /**
      * delete metadata node of a user
      * @param jid Jid from which the node will be deleted
@@ -564,11 +626,19 @@ public class XEP398IQHandler implements PacketInterceptor
     public void broadcastDeletePresenceUpdate(JID jid)
     {
         broadcastPresenceUpdate(jid,null,false);
+        if (XEP398Plugin.XMPP_XEP0008_ENABLED.getValue())
+        {
+            broadcastPresenceUpdateJabberXAvatar(jid,null,false);
+        }
     }
 
     public void broadcastPublishPresenceUpdate(JID jid, Avatar avatar,boolean shrinked)
     {
         broadcastPresenceUpdate(jid,avatar,shrinked);
+        if (XEP398Plugin.XMPP_XEP0008_ENABLED.getValue())
+        {
+            broadcastPresenceUpdateJabberXAvatar(jid,avatar,shrinked);
+        }
     }
 
     /**
@@ -630,11 +700,73 @@ public class XEP398IQHandler implements PacketInterceptor
             Log.error("Could not send presence: "+e.getMessage());
         }
     }
+    
+    /**
+     * send a Presence to the server, which routes it to subscribers
+      * @param jid
+      *            is the senders jid
+      * @param publish whether a photo is published or not
+      * */
+    private void broadcastPresenceUpdateJabberXAvatar(JID jid, Avatar avatar,boolean shrinked)
+    {
+         User usr;
+         try
+         {
+             usr = XMPPServer.getInstance().getUserManager().getUser(jid.getNode());
+             Presence presenceStanza = XMPPServer.getInstance().getPresenceManager().getPresence(usr);
+             presenceStanza.setID(UUID.randomUUID().toString());
+             if (presenceStanza.getFrom()==null)
+             {
+                 presenceStanza.setFrom(jid);
+             }
 
-    private void handleIncomingIQ(IQ iq, Session session) {
+             Element x = presenceStanza.getChildElement("x", NAMESPACE_JABBER_X_AVATAR);
+             if (x==null)
+             {
+                 x=presenceStanza.addChildElement("x", NAMESPACE_JABBER_X_AVATAR);
+             }
 
-        if (iq.getType()!=Type.set)
+             Element hash = x.element("hash");
+
+             if (hash==null)
+             {
+                 hash=x.addElement("hash");
+             }
+
+             if (avatar!=null)
+             {
+                 if (!shrinked)
+                 {
+                     if (avatar.getMainHash()!=null)
+                     {
+                         hash.setText(avatar.getMainHash());
+                     }
+                 }
+                 else
+                 {
+                     String sha1=avatar.getMainHashShrinked();
+                     if (sha1!=null)
+                     {
+                         hash.setText(sha1);
+                     }
+                 }
+             }
+
+             XMPPServer.getInstance().getPresenceRouter().route(presenceStanza);
+
+         }
+         catch (UserNotFoundException e)
+         {
+             Log.error("Could not send presence: "+e.getMessage());
+         }
+     }
+
+    private void handleIncomingIQ(IQ iq, Session session, boolean incoming, boolean processed) throws PacketRejectedException {
+        
+        if (iq.getType()!=Type.set&&iq.getType()!=Type.get)
+        {
             return;
+        }
 
         if (iq.getChildElement()!=null)
         {
@@ -643,7 +775,7 @@ public class XEP398IQHandler implements PacketInterceptor
 
             if (childns!=null)
             {
-                if (childns.equalsIgnoreCase(NAMESPACE_PUBSUB)) // PUBUB Packet, check for XEP-0084
+                if (incoming&&processed&&childns.equalsIgnoreCase(NAMESPACE_PUBSUB)&&iq.getType()==Type.set) // PUBUB Packet, check for XEP-0084
                 {
 
                     Element publish = null;
@@ -707,12 +839,12 @@ public class XEP398IQHandler implements PacketInterceptor
                     }
                 }
                 else
-                if (childns.equalsIgnoreCase(NAMESPACE_VCARD_TEMP))
+                if (incoming&&processed&&childns.equalsIgnoreCase(NAMESPACE_VCARD_TEMP)&&iq.getType()==Type.set)
                 {
                     Element vcard = null;
                     if ((vcard=iq.getElement().element("vCard"))!=null)
                     {
-                        //We got a vcard, check if is empty or net
+                        //We got a vcard, check if it is empty or not
                         if (vcard.hasContent())
                         {
                             Log.debug("Processing incoming vcard, we have content and checking for an avatar now...(XEP-0153)");
@@ -843,11 +975,11 @@ public class XEP398IQHandler implements PacketInterceptor
 
         if (XEP398Plugin.XMPP_AVATARCONVERSION_ENABLED.getValue()&&packet!=null)
         {
-            if (packet instanceof IQ && incoming && processed)
+            if (packet instanceof IQ )
             {
                 if (packet.getFrom()!=null&&packet.getFrom().getDomain().equalsIgnoreCase(XMPPServer.getInstance().getServerInfo().getXMPPDomain()))
                 {
-                    handleIncomingIQ((IQ)packet,session);
+                    handleIncomingIQ((IQ)packet,session,incoming,processed);
                 }
             }
             else 
@@ -891,6 +1023,126 @@ public class XEP398IQHandler implements PacketInterceptor
         catch (Exception e)
         {
             Log.error("Could not update vcard: "+e.getMessage());
+        }
+    } 
+
+    private static IQ getError(JID to, String namespace, String type, String code, String errorelement, String errornamespace) {
+        IQ result= new IQ(Type.error);
+        result.setTo(to);
+        result.setFrom(new JID(XMPPServer.getInstance().getServerInfo().getXMPPDomain()));
+        Element error = result.setChildElement("error",namespace);
+        error.addAttribute("type", type);
+        error.addAttribute("code", code);
+        error.addElement(errorelement,errornamespace);
+        return result;
+    }
+
+    class JabberIQAvatarHandler extends IQHandler {
+
+        private IQHandlerInfo info;
+
+        public JabberIQAvatarHandler() {
+            super(NAMESPACE_JABBER_IQ_AVATAR);
+            this.info = new IQHandlerInfo("query", NAMESPACE_JABBER_IQ_AVATAR);
+        }
+
+        @Override
+        public IQHandlerInfo getInfo() {
+            return info;
+        }
+
+        @Override
+        public IQ handleIQ(IQ iq) throws UnauthorizedException 
+        {
+            IQ result=null;
+            if (XEP398Plugin.XMPP_XEP0008_ENABLED.getValue())
+            {
+               if (iq.getChildElement().getName().equalsIgnoreCase("query")&&iq.getType()==Type.get&&iq.getChildElement()!=null&&iq.getChildElement().getNamespaceURI().equalsIgnoreCase(NAMESPACE_JABBER_IQ_AVATAR))
+               {
+                   result = getXEP0008Avatar(iq.getTo(),iq.getFrom(),NAMESPACE_JABBER_IQ_AVATAR,iq.getID());
+               }
+               else {
+                   result = getError(iq.getFrom(),NAMESPACE_JABBER_IQ_AVATAR,"modify","400","bad-request","urn:ietf:params:xml:ns:xmpp-stanzas");
+               }
+            }
+            else {
+               result = getError(iq.getFrom(),NAMESPACE_JABBER_IQ_AVATAR,"cancel","503","service-unavailable","urn:ietf:params:xml:ns:xmpp-stanzas");
+            }
+            return result;
+        }
+    }
+
+    class StorageClientAvatarHandler extends IQHandler {
+
+        private IQHandlerInfo info;
+        private XEP398Plugin plugin;
+        public StorageClientAvatarHandler(XEP398Plugin plugin) {
+            super(NAMESPACE_STORAGE_CLIENT_AVATAR);
+            this.info = new IQHandlerInfo("query", NAMESPACE_STORAGE_CLIENT_AVATAR);
+            this.plugin=plugin;
+        }
+
+        @Override
+        public IQHandlerInfo getInfo() {
+            return info;
+        }
+
+        @Override
+        public IQ handleIQ(IQ iq) throws UnauthorizedException 
+        {
+            IQ result=null;
+            if (XEP398Plugin.XMPP_XEP0008_ENABLED.getValue())
+            {
+               if (iq.getChildElement().getName().equalsIgnoreCase("query")&&iq.getType()==Type.get&&iq.getChildElement()!=null&&iq.getChildElement().getNamespaceURI().equalsIgnoreCase(NAMESPACE_STORAGE_CLIENT_AVATAR))
+               {
+                   result = getXEP0008Avatar(iq.getTo(),iq.getFrom(),NAMESPACE_STORAGE_CLIENT_AVATAR,iq.getID());
+               }
+               else
+               if (iq.getType()==Type.set&&iq.getChildElement()!=null&&iq.getChildElement().getNamespaceURI().equalsIgnoreCase(NAMESPACE_STORAGE_CLIENT_AVATAR))
+               {
+                   Element query = null;
+                   if ((query=iq.getElement().element("query"))!=null)
+                   {
+                       //We got a query, check if is empty or not
+                       if (query .hasContent())
+                       {
+                           Log.debug("Processing incoming storage:client:avatar, we have content and checking for an avatar now...(XEP-0008)");
+                           Element data = null;
+                           if ((data=query.element("data"))!=null&&data.hasContent()) {
+
+                                Avatar avatar = buildAvatar(data.getText(), data.attributeValue("mimetype"));
+                                this.plugin.getCache().put(iq.getFrom().toBareJID(), avatar.toString());
+
+                                routeDataToServer(iq.getFrom(), avatar);
+                                routeMetaDataToServer(iq.getFrom(), avatar);
+                                result=getResult(iq.getTo(),iq.getFrom(),NAMESPACE_JABBER_IQ_AVATAR,iq.getID());
+                           }
+                           else {
+                               this.plugin.getCache().remove(iq.getFrom().toBareJID());
+                               deleteVCardAvatar(iq.getFrom());
+                               deletePEPAvatar(iq.getFrom());
+                               result=getResult(iq.getTo(),iq.getFrom(),NAMESPACE_JABBER_IQ_AVATAR,iq.getID());
+                           }
+                       }
+                       else {
+                           this.plugin.getCache().remove(iq.getFrom().toBareJID());
+                           deleteVCardAvatar(iq.getFrom());
+                           deletePEPAvatar(iq.getFrom());
+                           result=getResult(iq.getTo(),iq.getFrom(),NAMESPACE_JABBER_IQ_AVATAR,iq.getID());
+                       }
+                   }
+                   else {
+                       result = getError(iq.getFrom(),NAMESPACE_STORAGE_CLIENT_AVATAR,"modify","400","bad-request","urn:ietf:params:xml:ns:xmpp-stanzas");
+                   }
+               }
+               else {
+                   result = getError(iq.getFrom(),NAMESPACE_STORAGE_CLIENT_AVATAR,"modify","400","bad-request","urn:ietf:params:xml:ns:xmpp-stanzas");
+               }
+           }
+           else {
+              result = getError(iq.getFrom(),NAMESPACE_STORAGE_CLIENT_AVATAR,"cancel","503","service-unavailable","urn:ietf:params:xml:ns:xmpp-stanzas");
+           }
+           return result;
         }
     }
 }
