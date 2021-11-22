@@ -877,10 +877,10 @@ public class XEP398IQHandler implements PacketInterceptor
 
                                          routeDataToServer(iq.getFrom(), avatar);
                                          routeMetaDataToServer(iq.getFrom(), avatar);
-                                         /*if (!XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
+                                         if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
                                          {
-                                             routeVCardUpdateToServer(iq.getFrom(), avatar);
-                                         }*/
+                                             deleteVCardAvatar(iq.getFrom());
+                                         }
                                     }
                                 }
                             }
@@ -998,22 +998,9 @@ public class XEP398IQHandler implements PacketInterceptor
         Element vcard = XMPPServer.getInstance().getVCardManager().getVCard(from.getNode());
         Element vcardphoto = vcard.element("PHOTO");
 
-        if (vcardphoto==null)
+        if (vcardphoto!=null)
         {
-            vcardphoto=vcard.addElement("PHOTO");
-            vcardphoto.addElement("BINVAL");
-            vcardphoto.addElement("TYPE");
-        }
-
-        Element binval = vcardphoto.element("BINVAL");
-        Element type = vcardphoto.element("TYPE");
-        if (binval!=null)
-        {
-            binval.setText("");
-        }
-        if (type!=null)
-        {
-            type.setText("");
+            vcard.remove(vcardphoto);
         }
 
         try
