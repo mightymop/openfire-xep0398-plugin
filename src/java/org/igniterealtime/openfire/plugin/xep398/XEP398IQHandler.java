@@ -761,9 +761,9 @@ public class XEP398IQHandler implements PacketInterceptor
          }
      }
 
-    private void handleIncomingIQ(IQ iq, Session session, boolean incoming, boolean processed) throws PacketRejectedException {
+    private void handleIQ(IQ iq, Session session, boolean incoming, boolean processed) throws PacketRejectedException {
         
-        if (iq.getType()!=Type.set&&iq.getType()!=Type.get)
+        if (iq.getType()!=Type.set&&iq.getType()!=Type.result)
         {
             return;
         }
@@ -897,8 +897,62 @@ public class XEP398IQHandler implements PacketInterceptor
                         }
                     }
                 }
+                else
+                if(!incoming&&!processed&&childns.equalsIgnoreCase(NAMESPACE_VCARD_TEMP)&&iq.getType()==Type.result)
+                {
+                    Element vcard = null;
+                    if ((vcard=iq.getElement().element("vCard"))!=null)
+                    {
+                        Avatar avatar = getAvatar(iq.getFrom());
+                        if (avatar!=null)
+                        {
+                            Element photo = null;
+                            if ((photo=vcard.element("PHOTO"))==null)
+                            {
+                                photo = vcard.addElement("PHOTO");
+                            }
+
+                            Element binval = null;
+                            if ((binval=photo.element("BINVAL"))==null) {
+                                binval = photo.addElement("BINVAL");
+                            }
+
+                            Element type = null;
+                            if ((type=photo.element("TYPE"))==null) {
+                                type = photo.addElement("TYPE");
+                            }
+
+                            type.setText(avatar.getMetadata().getType());
+                            if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
+                            {
+                                binval.setText(avatar.getImageString());
+                            }
+                            else
+                            {
+                                if (XEP398Plugin.XMPP_SHRINKVCARDIMG_ENABLED.getValue())
+                                {
+                                    String shrinked = avatar.getShrinkedImage();
+                                    if (shrinked!=null)
+                                    {
+                                        binval.setText(shrinked);
+                                    }
+                                    else
+                                    {
+                                        Log.error("Could not shrink avatar image.");
+                                        binval.setText(avatar.getImageString());
+                                    }
+                                }
+                                else
+                                {
+                                    binval.setText(avatar.getImageString());
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            else {
+            else
+            {
                 Log.warn("We received a packet without namespace attribute",iq.toXML());
             }
         }
@@ -934,36 +988,32 @@ public class XEP398IQHandler implements PacketInterceptor
 
             Element photo = x.element("photo");
 
-            if (photo==null||!photo.getText().isEmpty())
+            if (photo==null)
             {
-                if (photo==null)
-                {
-                    photo = x.addElement("photo");
-                }
+                photo = x.addElement("photo");
+            }
 
-                if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
+            if (XEP398Plugin.XMPP_DELETEOTHERAVATAR_ENABLED.getValue())
+            {
+                photo.setText(avatar.getMainHash());
+            }
+            else
+            {
+                if (XEP398Plugin.XMPP_SHRINKVCARDIMG_ENABLED.getValue())
                 {
-                    photo.setText(avatar.getMainHash());
-                }
-                else 
-                {
-                    if (XEP398Plugin.XMPP_SHRINKVCARDIMG_ENABLED.getValue())
+                    String hash = avatar.getMainHashShrinked();
+                    if (hash!=null)
                     {
-                        String hash = avatar.getMainHashShrinked();
-                        Log.warn(hash);
-                        if (hash!=null)
-                        {
-                            photo.setText(hash);
-                        }
-                        else
-                        {
-                            Log.error("Could not shrink avatar image.");
-                        }
+                        photo.setText(hash);
                     }
                     else
                     {
-                        photo.setText(avatar.getMainHash());
+                        Log.error("Could not shrink avatar image.");
                     }
+                }
+                else
+                {
+                    photo.setText(avatar.getMainHash());
                 }
             }
         }
@@ -979,7 +1029,7 @@ public class XEP398IQHandler implements PacketInterceptor
             {
                 if (packet.getFrom()!=null&&packet.getFrom().getDomain().equalsIgnoreCase(XMPPServer.getInstance().getServerInfo().getXMPPDomain()))
                 {
-                    handleIncomingIQ((IQ)packet,session,incoming,processed);
+                    handleIQ((IQ)packet,session,incoming,processed);
                 }
             }
             else 
